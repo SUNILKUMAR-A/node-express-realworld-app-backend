@@ -33,6 +33,31 @@ NODE_ENV=production
 
 For PostgreSQL, set `DATABASE_URL` to the application connection string and `DIRECT_URL` to the direct connection string used by Prisma migrations. For the AWS RDS deployment in this assignment, both use the private RDS endpoint with `sslmode=require`. Locally, both can use the same connection string. Keep credentials in an ignored `.env` file for local development and AWS Secrets Manager in deployed environments; never commit credentials.
 
+### Private RDS migrations
+
+The production database is private and accepts connections only from the application Lambda and the one-shot migration runner security groups. The Terraform stack provisions a VPC-connected CodeBuild project, an encrypted private S3 artifact bucket, and VPC endpoints for S3, Secrets Manager, and CloudWatch Logs. This avoids a NAT gateway, but interface endpoints have hourly charges.
+
+The migration runner temporarily uses the RDS-managed master credential to create or rotate a restricted `realworld_app` database role. It then runs `prisma migrate deploy` as that restricted role and stores the application credential JSON in the dedicated Secrets Manager secret. The Lambda role can read only the application secret; it cannot read the RDS master secret. Never print or commit either credential.
+
+To prepare and invoke a migration after applying the Terraform stack:
+
+```shell
+npm ci
+npx prisma generate
+export MIGRATION_ARTIFACT_BUCKET="$(terraform -chdir=infra/main output -raw migration_artifact_bucket)"
+./scripts/package-migration-artifact.sh
+aws codebuild start-build \
+  --project-name "$(terraform -chdir=infra/main output -raw migration_codebuild_project)"
+```
+
+Check the CodeBuild result and CloudWatch Logs before deploying an API release. The migration artifact contains installed Node dependencies and Prisma migrations; it is uploaded to a private, encrypted, versioned S3 bucket with a 30-day lifecycle.
+
+On Linux, invoke the packaging helper with `bash` if its executable bit is not set:
+
+```shell
+bash ./scripts/package-migration-artifact.sh
+```
+
 ### Generate your Prisma client
 
 Run the following command to generate the Prisma Client which will include types based on your database schema:

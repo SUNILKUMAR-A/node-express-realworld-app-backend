@@ -85,6 +85,14 @@ resource "aws_security_group" "secrets_manager_endpoint" {
     security_groups = [aws_security_group.lambda.id]
   }
 
+  ingress {
+    description     = "HTTPS from the one-shot migration runner."
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.migrations.id]
+  }
+
   tags = {
     Name = "${local.name}-secrets-endpoint"
   }
@@ -100,6 +108,48 @@ resource "aws_vpc_endpoint" "secrets_manager" {
 
   tags = {
     Name = "${local.name}-secrets-manager"
+  }
+}
+
+resource "aws_vpc_endpoint" "s3" {
+  vpc_id            = aws_vpc.app.id
+  service_name      = "com.amazonaws.${var.aws_region}.s3"
+  vpc_endpoint_type = "Gateway"
+  route_table_ids   = [aws_vpc.app.default_route_table_id]
+
+  tags = {
+    Name = "${local.name}-s3"
+  }
+}
+
+resource "aws_security_group" "logs_endpoint" {
+  name        = "${local.name}-logs-endpoint"
+  description = "Allow HTTPS from the migration runner to CloudWatch Logs."
+  vpc_id      = aws_vpc.app.id
+
+  ingress {
+    description     = "HTTPS from the one-shot migration runner."
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.migrations.id]
+  }
+
+  tags = {
+    Name = "${local.name}-logs-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "logs" {
+  vpc_id              = aws_vpc.app.id
+  service_name        = "com.amazonaws.${var.aws_region}.logs"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.database[0].id]
+  security_group_ids  = [aws_security_group.logs_endpoint.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${local.name}-logs"
   }
 }
 

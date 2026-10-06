@@ -46,3 +46,13 @@ output "migration_security_group_id" {
   description = "Attach this security group to the one-shot database migration job."
   value       = aws_security_group.migrations.id
 }
+
+output "migration_codebuild_project" {
+  description = "On-demand CodeBuild project for private RDS migrations."
+  value       = aws_codebuild_project.migration.name
+}
+
+output "migration_artifact_bucket" {
+  description = "Private S3 bucket for migration source artifacts."
+  value       = aws_s3_bucket.migration_artifacts.bucket
+}
