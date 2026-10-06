@@ -23,6 +23,16 @@ resource "aws_cloudwatch_log_group" "postgresql_upgrade" {
   }
 }
 
+resource "aws_secretsmanager_secret" "app_credentials" {
+  name                    = "${local.name}/application-database"
+  description             = "Restricted application database credentials provisioned by the migration job."
+  recovery_window_in_days = 7
+
+  tags = {
+    Name = "${local.name}-application-database"
+  }
+}
+
 resource "aws_db_instance" "app" {
   identifier                          = local.name
   engine                              = data.aws_rds_engine_version.postgres.engine

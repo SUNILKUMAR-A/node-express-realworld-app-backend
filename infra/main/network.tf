@@ -54,6 +54,24 @@ resource "aws_security_group" "lambda" {
   }
 }
 
+resource "aws_security_group" "migrations" {
+  name        = "${local.name}-migrations"
+  description = "Security group for one-shot private database migrations."
+  vpc_id      = aws_vpc.app.id
+
+  egress {
+    description = "Allow outbound traffic to private VPC endpoints and PostgreSQL."
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${local.name}-migrations"
+  }
+}
+
 resource "aws_security_group" "secrets_manager_endpoint" {
   name        = "${local.name}-secrets-endpoint"
   description = "Allow HTTPS from the application Lambda to the Secrets Manager VPC endpoint."
@@ -96,6 +114,14 @@ resource "aws_security_group" "database" {
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [aws_security_group.lambda.id]
+  }
+
+  ingress {
+    description     = "PostgreSQL from the one-shot migration runner."
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.migrations.id]
   }
 
   egress {
