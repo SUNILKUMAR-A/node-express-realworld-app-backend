@@ -13,6 +13,7 @@
     "schema": "src/prisma/schema.prisma"
   },
   "dependencies": {
+    "@codegenie/serverless-express": "^4.17.1",
     "@ngneat/falso": "^7.1.1",
     "@prisma/client": "^6.19.3",
     "axios": "^1.0.0",
