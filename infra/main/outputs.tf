@@ -9,6 +9,11 @@ output "lambda_security_group_id" {
   value       = aws_security_group.lambda.id
 }
 
+output "secrets_manager_vpc_endpoint_id" {
+  description = "Private interface endpoint Lambda uses to retrieve RDS-managed credentials."
+  value       = aws_vpc_endpoint.secrets_manager.id
+}
+
 output "database_endpoint" {
   description = "Private PostgreSQL endpoint. It is reachable only from the Lambda security group."
   value       = aws_db_instance.app.address

@@ -54,6 +54,37 @@ resource "aws_security_group" "lambda" {
   }
 }
 
+resource "aws_security_group" "secrets_manager_endpoint" {
+  name        = "${local.name}-secrets-endpoint"
+  description = "Allow HTTPS from the application Lambda to the Secrets Manager VPC endpoint."
+  vpc_id      = aws_vpc.app.id
+
+  ingress {
+    description     = "HTTPS from the application Lambda."
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    security_groups = [aws_security_group.lambda.id]
+  }
+
+  tags = {
+    Name = "${local.name}-secrets-endpoint"
+  }
+}
+
+resource "aws_vpc_endpoint" "secrets_manager" {
+  vpc_id              = aws_vpc.app.id
+  service_name        = "com.amazonaws.${var.aws_region}.secretsmanager"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = [aws_subnet.database[0].id]
+  security_group_ids  = [aws_security_group.secrets_manager_endpoint.id]
+  private_dns_enabled = true
+
+  tags = {
+    Name = "${local.name}-secrets-manager"
+  }
+}
+
 resource "aws_security_group" "database" {
   name        = "${local.name}-database"
   description = "Allow PostgreSQL connections only from the application Lambda security group."
