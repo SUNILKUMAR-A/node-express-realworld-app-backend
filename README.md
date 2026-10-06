@@ -26,9 +26,12 @@ Here are the required ones:
 
 ```
 DATABASE_URL=
+DIRECT_URL=
 JWT_SECRET=
 NODE_ENV=production
 ```
+
+For Neon, set `DATABASE_URL` to the pooled connection string used by the application and `DIRECT_URL` to the direct connection string used by Prisma migrations. For local PostgreSQL, both can use the same connection string. Keep these values in an ignored `.env` file locally and in a secrets manager in deployed environments; never commit credentials.
 
 ### Generate your Prisma client
 
