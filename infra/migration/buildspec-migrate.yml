@@ -9,5 +9,3 @@ phases:
   build:
     commands:
       - node scripts/provision-app-db-user.js
-      - ./node_modules/.bin/prisma migrate deploy
-
