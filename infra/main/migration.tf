@@ -161,7 +161,7 @@ resource "aws_codebuild_project" "migration" {
   name         = "${local.name}-migrations"
   description  = "Run Prisma migrations against private RDS and provision the restricted application database user."
   service_role = aws_iam_role.migration.arn
-  timeout      = 30
+  build_timeout = 30
 
   source {
     type      = "S3"
