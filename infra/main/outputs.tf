@@ -51,3 +51,28 @@ output "migration_artifact_bucket" {
   description = "Private S3 bucket for Jenkins-generated deployment artifacts."
   value       = aws_s3_bucket.migration_artifacts.bucket
 }
+
+output "api_url" {
+  description = "Invoke URL for the HTTP API."
+  value       = aws_apigatewayv2_api.api.api_endpoint
+}
+
+output "frontend_bucket" {
+  description = "Private bucket Jenkins syncs with the built frontend."
+  value       = aws_s3_bucket.frontend.bucket
+}
+
+output "frontend_url" {
+  description = "CloudFront URL for the frontend."
+  value       = "https://${aws_cloudfront_distribution.frontend.domain_name}"
+}
+
+output "cloudfront_distribution_id" {
+  description = "CloudFront distribution ID for frontend invalidations."
+  value       = aws_cloudfront_distribution.frontend.id
+}
+
+output "cloudwatch_dashboard_name" {
+  description = "CloudWatch application dashboard."
+  value       = aws_cloudwatch_dashboard.application.dashboard_name
+}

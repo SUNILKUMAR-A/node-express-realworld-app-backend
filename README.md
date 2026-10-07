@@ -51,6 +51,47 @@ node scripts/provision-app-db-user.js
 
 The placeholder URLs are used only for Prisma client generation; migrations and database-user provisioning obtain their real credentials from Secrets Manager at runtime. Jenkins must run migrations before publishing a backend release. The private, encrypted, versioned S3 bucket is reserved for deployment artifacts and expires old migration artifacts after 30 days.
 
+## Assignment deployment architecture
+
+The development deployment uses a static React build in a private S3 bucket behind CloudFront. API Gateway HTTP API invokes the Express application on Lambda. Lambda runs in private subnets and connects to private, encrypted RDS PostgreSQL. A Secrets Manager interface VPC endpoint lets Lambda fetch the restricted application credential without a NAT gateway. Jenkins runs on the existing EC2 host and reaches RDS through same-region VPC peering for migrations.
+
+Terraform provisions the application stack and stores state in the encrypted, versioned S3 state bucket with native S3 lock files. The state-bucket bootstrap is separate from the application stack. Keep Terraform state and plan files out of Git.
+
+## Jenkins CI/CD
+
+Configure a Jenkins Pipeline job to load this repository's `Jenkinsfile`. The existing Jenkins EC2 instance profile provides AWS authentication; do not put long-lived AWS access keys in Jenkins or source control. The job clones the frontend repository and runs:
+
+1. `npm ci`, Prisma client generation, backend production build, and backend tests.
+2. Frontend dependency install and build, dependency audit reports, and Checkov Terraform scanning when Checkov is installed on the Jenkins agent.
+3. Lambda packaging and upload under an immutable commit/build-number S3 key.
+4. `prisma migrate deploy` from Jenkins over private VPC peering before application deployment.
+5. Terraform plan/apply for API Gateway, Lambda, S3, CloudFront, IAM, and CloudWatch.
+6. React production build using the API Gateway URL, private S3 sync, CloudFront invalidation, and API/frontend smoke checks.
+
+The deployed Lambda artifact key records the source Git commit and Jenkins build number. Use Git SemVer tags for release labels; do not deploy a mutable `latest` artifact. Review pipeline scan reports and address or document findings rather than describing an unreviewed audit as clean.
+
+## Monitoring and security
+
+CloudWatch retains Lambda and API Gateway logs for seven days, provides Lambda error alarms, and the Terraform stack creates a dashboard for Lambda invocations/errors/throttles/duration, API Gateway request/latency/5xx metrics, and RDS CPU/connections. Grafana can visualize CloudWatch metrics if needed; Prometheus is not used to scrape Lambda.
+
+RDS is encrypted, private, single-AZ for the demo, and only accepts PostgreSQL from the Lambda and Jenkins security groups. Lambda may read only the restricted application secret; Jenkins can read the RDS-managed master secret only to run migrations and provision the app user. S3 frontend and artifact buckets block public access. Dependency audit and Terraform scan outputs are archived by Jenkins. Never commit `.env`, AWS credentials, generated secret values, Terraform state, or plan files.
+
+## Cost and limitations
+
+The API and frontend scale serverlessly, but standard RDS PostgreSQL is provisioned and can incur instance/storage charges while running. Interface VPC endpoints also have hourly charges and are not necessarily covered by Free Tier. CloudFront transfer, CloudWatch logs, Secrets Manager, EC2/Jenkins, and data transfer can incur additional charges. Eligibility depends on account age, region, current AWS terms, and usage. Use AWS Billing/Cost Explorer and a budget alert; stop or remove disposable resources after capturing evidence.
+
+This is a single-region development demonstration: RDS is single-AZ with short backup/log retention, Jenkins is a single EC2 host, and no production high availability or load testing is claimed. A production version should add a reviewed multi-AZ database/backup strategy, approval gates, secret rotation, stronger frontend/API CORS restrictions, separate environments, and tested recovery procedures.
+
+## Challenges encountered
+
+- The starter frontend referenced a stylesheet URL that returned 404. Bootstrap is now installed locally and included in the frontend build; the original external theme is no longer required for the app to render.
+- PostgreSQL on Amazon Linux initially used `ident` for local TCP authentication. The local development setup was corrected with a database-specific SCRAM rule; the deployed RDS database uses private security-group access and Secrets Manager credentials instead.
+- Auth service tests initially reached a real EC2 database because the Prisma mock loaded after the service. Import order was fixed, and the test suite passed (26 tests passed, one existing test remains marked todo).
+- The AWS account allowed zero CodeBuild builds. CodeBuild was removed from the design; Jenkins on the existing EC2 host is used for CI/CD and private RDS migrations over VPC peering.
+- Terraform bootstrap and application state are kept separate in S3, with versioning and native S3 lock files. The application plan was reviewed before applying the VPC, RDS, endpoints, and Jenkins connectivity.
+
+Screenshots, scan reports, and build logs should be captured from actual successful runs and attached to the submission. Do not represent a planned or unexecuted pipeline as a successful deployment.
+
 ### Generate your Prisma client
 
 Run the following command to generate the Prisma Client which will include types based on your database schema:

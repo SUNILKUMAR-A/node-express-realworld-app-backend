@@ -46,6 +46,23 @@ resource "aws_s3_bucket_lifecycle_configuration" "migration_artifacts" {
     status = "Enabled"
 
     filter {
+      prefix = "lambda/"
+    }
+
+    expiration {
+      days = 90
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
+  rule {
+    id     = "expire-old-migration-artifacts"
+    status = "Enabled"
+
+    filter {
       prefix = "migration/"
     }
 

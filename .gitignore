@@ -41,6 +41,8 @@ testem.log
 *.tfstate.*
 *.tfplan
 *.tfvars
+*.auto.tfvars.json
+infra/main/lambda.zip
 crash.log
 
 # System Files
@@ -48,21 +50,3 @@ crash.log
 Thumbs.db
 
 .nx/cache
-
-
-**/.terraform/*
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log**/.terraform/*
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log
-
-# Terraform state and local working data
-**/.terraform/*
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log

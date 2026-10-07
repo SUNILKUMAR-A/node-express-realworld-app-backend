@@ -78,3 +78,58 @@ resource "aws_iam_role_policy" "jenkins_migrations" {
   role   = var.jenkins.iam_role_name
   policy = data.aws_iam_policy_document.jenkins_migrations.json
 }
+
+data "aws_iam_policy_document" "jenkins_deploy" {
+  statement {
+    sid       = "LocateDeploymentArtifactBucket"
+    effect    = "Allow"
+    actions   = ["s3:GetBucketLocation"]
+    resources = [aws_s3_bucket.migration_artifacts.arn]
+  }
+
+  statement {
+    sid    = "PublishLambdaArtifacts"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:GetObject",
+      "s3:GetObjectVersion",
+    ]
+    resources = ["${aws_s3_bucket.migration_artifacts.arn}/lambda/*"]
+  }
+
+  statement {
+    sid    = "PublishFrontendAssets"
+    effect = "Allow"
+    actions = [
+      "s3:ListBucket",
+    ]
+    resources = [aws_s3_bucket.frontend.arn]
+  }
+
+  statement {
+    sid    = "SyncFrontendAssets"
+    effect = "Allow"
+    actions = [
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:AbortMultipartUpload",
+    ]
+    resources = ["${aws_s3_bucket.frontend.arn}/*"]
+  }
+
+  statement {
+    sid       = "InvalidateFrontendCache"
+    effect    = "Allow"
+    actions   = ["cloudfront:CreateInvalidation"]
+    resources = [aws_cloudfront_distribution.frontend.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "jenkins_deploy" {
+  count = local.jenkins_peering_enabled ? 1 : 0
+
+  name   = "${local.name}-jenkins-deploy"
+  role   = var.jenkins.iam_role_name
+  policy = data.aws_iam_policy_document.jenkins_deploy.json
+}
