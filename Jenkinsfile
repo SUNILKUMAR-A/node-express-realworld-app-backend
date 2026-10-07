@@ -8,108 +8,74 @@ pipeline {
   }
 
   parameters {
-    string(name: 'JENKINS_VPC_ID', defaultValue: 'vpc-048e94ddedf6863e1', description: 'VPC ID for the existing Jenkins EC2 instance')
-    string(name: 'JENKINS_VPC_CIDR', defaultValue: '172.31.0.0/16', description: 'CIDR for the Jenkins VPC')
-    string(name: 'JENKINS_ROUTE_TABLE_ID', defaultValue: 'rtb-044f0a70819010452', description: 'Jenkins subnet/VPC route table')
-    string(name: 'JENKINS_SECURITY_GROUP_ID', defaultValue: 'sg-009baace5c5ee5c7c', description: 'Security group attached to Jenkins EC2')
-    string(name: 'JENKINS_IAM_ROLE_NAME', defaultValue: 'TerraformEC2Role', description: 'EC2 instance-profile role name')
+    string(name: 'DB_HOST', defaultValue: '', description: 'Private RDS endpoint from Terraform output')
+    string(name: 'DB_PORT', defaultValue: '5432', description: 'RDS PostgreSQL port')
+    string(name: 'DB_NAME', defaultValue: 'realworld', description: 'PostgreSQL database name')
+    string(name: 'RDS_MASTER_SECRET_ARN', defaultValue: '', description: 'RDS-managed master secret ARN')
+    string(name: 'APP_SECRET_ARN', defaultValue: '', description: 'Application database secret ARN')
+    string(name: 'APP_PUBLIC_URL', defaultValue: '', description: 'Optional URL for the agent EC2, e.g. http://198.51.100.10')
   }
 
   environment {
     AWS_DEFAULT_REGION = 'ap-south-1'
     FRONTEND_REPOSITORY = 'https://github.com/SUNILKUMAR-A/react-redux-realworld-app-frontent.git'
     FRONTEND_BRANCH = 'master'
-    FRONTEND_PAGES_OWNER = 'SUNILKUMAR-A'
-    FRONTEND_PAGES_REPOSITORY = 'react-redux-realworld-app-frontent'
     NPM_CONFIG_CACHE = '/home/ec2-user/.cache/jenkins/npm'
-    DATABASE_URL = 'postgresql://placeholder:placeholder@localhost:5432/realworld?schema=public'
-    DIRECT_URL = 'postgresql://placeholder:placeholder@localhost:5432/realworld?schema=public'
     APP_DB_USERNAME = 'realworld_app'
+    DATABASE_URL = 'postgresql://localhost:5432/realworld?schema=public'
+    DIRECT_URL = 'postgresql://localhost:5432/realworld?schema=public'
   }
 
   stages {
     stage('Checkout frontend') {
       steps {
-        sh '''
-          rm -rf frontend
-          git clone --depth 1 --branch "$FRONTEND_BRANCH" "$FRONTEND_REPOSITORY" frontend
-        '''
+        sh 'git clone --depth 1 --branch "$FRONTEND_BRANCH" "$FRONTEND_REPOSITORY" frontend'
       }
     }
 
-    stage('Install, test, and scan') {
+    stage('Build, test, and scan') {
       steps {
         sh '''
+          set -eu
           mkdir -p "$NPM_CONFIG_CACHE"
           npm ci --cache "$NPM_CONFIG_CACHE"
           npx prisma generate
           npx nx build api --configuration=production
           npx nx test api --runInBand
           npm audit --json > backend-npm-audit.json || true
-          cd frontend
-          npm ci --legacy-peer-deps --cache "$NPM_CONFIG_CACHE"
-          npm audit --json > ../frontend-npm-audit.json || true
-          cd ..
-          if command -v checkov >/dev/null 2>&1; then
-            CHECKOV=checkov
-          else
-            python3 -m venv .venv-checkov
-            .venv-checkov/bin/pip install --quiet checkov
-            CHECKOV=.venv-checkov/bin/checkov
-          fi
-          "$CHECKOV" -d infra/main --framework terraform --soft-fail -o json > checkov-results.json || true
+          (
+            cd frontend
+            npm ci --legacy-peer-deps --cache "$NPM_CONFIG_CACHE"
+            npm audit --json > ../frontend-npm-audit.json || true
+            NODE_OPTIONS=--openssl-legacy-provider REACT_APP_API_ROOT=/api npm run build
+          )
         '''
       }
       post {
         always {
-          archiveArtifacts artifacts: '*npm-audit.json,checkov-results.json', allowEmptyArchive: true
+          archiveArtifacts artifacts: '*npm-audit.json', allowEmptyArchive: true
         }
       }
     }
 
-    stage('Initialize infrastructure') {
-      steps {
-        script {
-          def jenkinsNetwork = [
-            vpc_id           : params.JENKINS_VPC_ID,
-            vpc_cidr         : params.JENKINS_VPC_CIDR,
-            route_table_id   : params.JENKINS_ROUTE_TABLE_ID,
-            security_group_id: params.JENKINS_SECURITY_GROUP_ID,
-            iam_role_name    : params.JENKINS_IAM_ROLE_NAME
-          ]
-          writeFile(
-            file: 'infra/main/jenkins.auto.tfvars.json',
-            text: groovy.json.JsonOutput.toJson([jenkins: jenkinsNetwork])
-          )
-        }
-        sh '''
-          terraform -chdir=infra/main init -input=false
-          terraform -chdir=infra/main fmt -check -recursive
-          terraform -chdir=infra/main validate
-        '''
-      }
-    }
-
-    stage('Package Lambda') {
+    stage('Validate deployment configuration') {
       steps {
         sh '''
           set -eu
-          mkdir -p dist/api/src/prisma
-          cp -a src/prisma/schema.prisma src/prisma/migrations dist/api/src/prisma/
-          mkdir -p "$NPM_CONFIG_CACHE"
-          npm ci --omit=dev --cache "$NPM_CONFIG_CACHE" --prefix dist/api
-          mkdir -p dist/api/node_modules/@prisma dist/api/node_modules/.prisma
-          rm -rf dist/api/node_modules/@prisma/client dist/api/node_modules/.prisma/client
-          cp -a node_modules/@prisma/client dist/api/node_modules/@prisma/
-          cp -a node_modules/.prisma/client dist/api/node_modules/.prisma/
-          mkdir -p infra/main
-          rm -f infra/main/lambda.zip
-          python3 -c "import shutil; shutil.make_archive('infra/main/lambda', 'zip', 'dist/api')"
-          test -s infra/main/lambda.zip
-          python3 -c "import collections,zipfile; z=zipfile.ZipFile('infra/main/lambda.zip'); d=collections.Counter(); [d.update({'/'.join(i.filename.split('/')[:3]):i.file_size}) for i in z.infolist() if i.filename.startswith('node_modules/')]; print('Largest Lambda package dependencies:\\n'+'\\n'.join(f'{size / 1024 / 1024:8.1f} MiB  {name}' for name,size in d.most_common(20)))"
-          python3 -c "import zipfile; z=zipfile.ZipFile('infra/main/lambda.zip'); size=sum(item.file_size for item in z.infolist()); print(f'Lambda uncompressed size: {size / 1024 / 1024:.1f} MiB'); assert size < 262144000, 'Lambda package exceeds AWS 250 MiB unzipped limit'"
-          aws s3 cp infra/main/lambda.zip \
-            "s3://$(terraform -chdir=infra/main output -raw migration_artifact_bucket)/lambda/${GIT_COMMIT}-${BUILD_NUMBER}.zip"
+          test -n "$DB_HOST" || { echo "Build parameter DB_HOST is empty"; exit 1; }
+          test -n "$DB_PORT" || { echo "Build parameter DB_PORT is empty"; exit 1; }
+          test -n "$DB_NAME" || { echo "Build parameter DB_NAME is empty"; exit 1; }
+          test -n "$RDS_MASTER_SECRET_ARN" || { echo "Build parameter RDS_MASTER_SECRET_ARN is empty"; exit 1; }
+          test -n "$APP_SECRET_ARN" || { echo "Build parameter APP_SECRET_ARN is empty"; exit 1; }
+          command -v node
+          command -v npm
+          command -v aws
+          command -v nginx || true
+          aws sts get-caller-identity
+          python3 -c 'import os,socket; connection=socket.create_connection((os.environ["DB_HOST"], int(os.environ["DB_PORT"])), timeout=5); connection.close()'
+          aws secretsmanager get-secret-value --secret-id "$RDS_MASTER_SECRET_ARN" --query SecretString --output text >/dev/null
+          aws secretsmanager get-secret-value --secret-id "$APP_SECRET_ARN" --query SecretString --output text >/dev/null
+          sudo -n true
         '''
       }
     }
@@ -118,78 +84,52 @@ pipeline {
       steps {
         sh '''
           set -eu
-          export DB_HOST="$(terraform -chdir=infra/main output -raw database_endpoint)"
-          export DB_PORT="$(terraform -chdir=infra/main output -raw database_port)"
-          export DB_NAME="$(terraform -chdir=infra/main output -raw database_name)"
-          export RDS_MASTER_SECRET_ARN="$(terraform -chdir=infra/main output -raw database_master_secret_arn)"
-          export APP_SECRET_ARN="$(terraform -chdir=infra/main output -raw database_app_secret_arn)"
+          export APP_DB_USERNAME
           node scripts/provision-app-db-user.js
         '''
       }
     }
 
-    stage('Terraform plan') {
+    stage('Prepare application release') {
       steps {
         sh '''
-          terraform -chdir=infra/main init -input=false
-          terraform -chdir=infra/main plan -input=false \
-            -var="lambda_package_key=lambda/${GIT_COMMIT}-${BUILD_NUMBER}.zip" \
-            -out=deployment.tfplan
-          terraform -chdir=infra/main show -no-color deployment.tfplan
+          set -eu
+          RELEASE_ID="${GIT_COMMIT}-${BUILD_NUMBER}"
+          RELEASE_DIR="/opt/realworld/releases/${RELEASE_ID}"
+          FRONTEND_RELEASE_DIR="/opt/realworld/frontend-releases/${RELEASE_ID}"
+          mkdir -p dist/api/src/prisma
+          cp -a src/prisma/schema.prisma src/prisma/migrations dist/api/src/prisma/
+          npm ci --omit=dev --cache "$NPM_CONFIG_CACHE" --prefix dist/api
+          mkdir -p dist/api/node_modules/@prisma dist/api/node_modules/.prisma
+          rm -rf dist/api/node_modules/@prisma/client dist/api/node_modules/.prisma/client
+          cp -a node_modules/@prisma/client dist/api/node_modules/@prisma/
+          cp -a node_modules/.prisma/client dist/api/node_modules/.prisma/
+          sudo dnf install -y nginx
+          sudo install -d -o ec2-user -g ec2-user /opt/realworld/releases
+          sudo install -d -o ec2-user -g ec2-user "$RELEASE_DIR"
+          cp -a dist/api/. "$RELEASE_DIR/"
+          sudo chown -R ec2-user:ec2-user "$RELEASE_DIR"
+          sudo install -d -o ec2-user -g ec2-user /opt/realworld/frontend-releases
+          sudo install -d -o ec2-user -g ec2-user "$FRONTEND_RELEASE_DIR"
+          cp -a frontend/build/. "$FRONTEND_RELEASE_DIR/"
+          sudo chown -R ec2-user:ec2-user "$FRONTEND_RELEASE_DIR"
+          sudo ln -sfn "$FRONTEND_RELEASE_DIR" /opt/realworld/frontend-current
+          sudo ln -sfn "$RELEASE_DIR" /opt/realworld/current
+          printf 'APP_SECRET_ARN=%s\\nAWS_REGION=%s\\nPORT=3000\\nNODE_ENV=production\\n' "$APP_SECRET_ARN" "$AWS_DEFAULT_REGION" |
+            sudo tee /etc/realworld-api.env >/dev/null
+          sudo chmod 600 /etc/realworld-api.env
+          NODE_BIN="$(command -v node)"
+          printf '[Unit]\\nDescription=RealWorld Express API\\nAfter=network-online.target\\nWants=network-online.target\\n\\n[Service]\\nType=simple\\nUser=ec2-user\\nGroup=ec2-user\\nWorkingDirectory=/opt/realworld/current\\nEnvironmentFile=/etc/realworld-api.env\\nExecStart=%s /opt/realworld/current/main.js\\nRestart=on-failure\\nRestartSec=5\\n\\n[Install]\\nWantedBy=multi-user.target\\n' "$NODE_BIN" |
+            sudo tee /etc/systemd/system/realworld-api.service >/dev/null
+          printf 'server {\\n  listen 80;\\n  server_name _;\\n  root /opt/realworld/frontend-current;\\n  index index.html;\\n  location /api/ {\\n    proxy_pass http://127.0.0.1:3000;\\n    proxy_http_version 1.1;\\n    proxy_set_header Host $host;\\n    proxy_set_header X-Real-IP $remote_addr;\\n    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\\n    proxy_set_header X-Forwarded-Proto $scheme;\\n  }\\n  location / {\\n    try_files $uri $uri/ /index.html;\\n  }\\n}\\n' |
+            sudo tee /etc/nginx/conf.d/realworld.conf >/dev/null
+          sudo nginx -t
+          sudo systemctl daemon-reload
+          sudo systemctl enable --now realworld-api
+          sudo systemctl restart realworld-api
+          sudo systemctl enable --now nginx
+          sudo systemctl restart nginx
         '''
-      }
-    }
-
-    stage('Approve Terraform apply') {
-      steps {
-        input message: 'Review the Terraform plan in Console Output. Confirm RDS is not destroyed or replaced before applying.', ok: 'Apply reviewed plan'
-      }
-    }
-
-    stage('Terraform apply') {
-      steps {
-        sh '''
-          terraform -chdir=infra/main apply -input=false deployment.tfplan
-        '''
-      }
-    }
-
-    stage('Deploy frontend') {
-      steps {
-        withCredentials([usernamePassword(
-          credentialsId: 'frontend-github-pages',
-          usernameVariable: 'GH_USERNAME',
-          passwordVariable: 'GH_TOKEN'
-        )]) {
-          sh '''
-            set -eu
-            API_URL="$(terraform -chdir=infra/main output -raw api_url)/api"
-            FRONTEND_URL="https://${FRONTEND_PAGES_OWNER}.github.io/${FRONTEND_PAGES_REPOSITORY}/"
-            cd frontend
-            PUBLIC_URL="/${FRONTEND_PAGES_REPOSITORY}" REACT_APP_API_ROOT="$API_URL" npm run build
-            cp build/index.html build/404.html
-            cd build
-            git init
-            git add --all
-            git -c user.name="Jenkins" \
-              -c user.email="jenkins@users.noreply.github.com" \
-              commit -m "Deploy ${GIT_COMMIT} build ${BUILD_NUMBER}"
-            git remote add origin "$FRONTEND_REPOSITORY"
-            ASKPASS="$WORKSPACE/.git-askpass"
-            printf '%s\n' \
-              '#!/bin/sh' \
-              'case "$1" in' \
-              '  *Username*) printf "%s" "$GH_USERNAME" ;;' \
-              '  *Password*) printf "%s" "$GH_TOKEN" ;;' \
-              '  *) exit 1 ;;' \
-              'esac' > "$ASKPASS"
-            chmod 700 "$ASKPASS"
-            GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
-              git push --force origin HEAD:gh-pages
-            rm -f "$ASKPASS"
-            echo "Frontend deployed to ${FRONTEND_URL}"
-          '''
-        }
       }
     }
 
@@ -197,10 +137,13 @@ pipeline {
       steps {
         sh '''
           set -eu
-          API_URL="$(terraform -chdir=infra/main output -raw api_url)"
-          FRONTEND_URL="https://${FRONTEND_PAGES_OWNER}.github.io/${FRONTEND_PAGES_REPOSITORY}/"
-          curl --fail --retry 12 --retry-delay 10 "$API_URL/"
-          curl --fail --retry 12 --retry-delay 10 "$FRONTEND_URL/"
+          curl --fail --retry 12 --retry-delay 5 http://127.0.0.1/
+          curl --fail --retry 12 --retry-delay 5 http://127.0.0.1/api/tags
+          if [ -n "$APP_PUBLIC_URL" ]; then
+            curl --fail --retry 6 --retry-delay 5 "$APP_PUBLIC_URL/"
+            curl --fail --retry 6 --retry-delay 5 "$APP_PUBLIC_URL/api/tags"
+            echo "Application URL: $APP_PUBLIC_URL"
+          fi
         '''
       }
     }
