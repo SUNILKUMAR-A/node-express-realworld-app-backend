@@ -143,8 +143,6 @@ pipeline {
           cd frontend
           REACT_APP_API_ROOT="$API_URL" npm run build
           aws s3 sync build/ "s3://${FRONTEND_BUCKET}/" --delete
-          DISTRIBUTION_ID="$(terraform -chdir=../infra/main output -raw cloudfront_distribution_id)"
-          aws cloudfront create-invalidation --distribution-id "$DISTRIBUTION_ID" --paths '/*'
           echo "Frontend deployed to ${FRONTEND_URL}"
         '''
       }

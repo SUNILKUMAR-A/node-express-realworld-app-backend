@@ -58,18 +58,13 @@ output "api_url" {
 }
 
 output "frontend_bucket" {
-  description = "Private bucket Jenkins syncs with the built frontend."
+  description = "Public-read website bucket Jenkins syncs with the built frontend."
   value       = aws_s3_bucket.frontend.bucket
 }
 
 output "frontend_url" {
-  description = "CloudFront URL for the frontend."
-  value       = "https://${aws_cloudfront_distribution.frontend.domain_name}"
-}
-
-output "cloudfront_distribution_id" {
-  description = "CloudFront distribution ID for frontend invalidations."
-  value       = aws_cloudfront_distribution.frontend.id
+  description = "HTTP S3 static website endpoint for the frontend."
+  value       = "http://${aws_s3_bucket.frontend.website_endpoint}"
 }
 
 output "cloudwatch_dashboard_name" {

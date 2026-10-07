@@ -118,12 +118,6 @@ data "aws_iam_policy_document" "jenkins_deploy" {
     resources = ["${aws_s3_bucket.frontend.arn}/*"]
   }
 
-  statement {
-    sid       = "InvalidateFrontendCache"
-    effect    = "Allow"
-    actions   = ["cloudfront:CreateInvalidation"]
-    resources = [aws_cloudfront_distribution.frontend.arn]
-  }
 }
 
 resource "aws_iam_role_policy" "jenkins_deploy" {
