@@ -19,6 +19,8 @@ pipeline {
     AWS_DEFAULT_REGION = 'ap-south-1'
     FRONTEND_REPOSITORY = 'https://github.com/SUNILKUMAR-A/react-redux-realworld-app-frontent.git'
     FRONTEND_BRANCH = 'master'
+    FRONTEND_PAGES_OWNER = 'SUNILKUMAR-A'
+    FRONTEND_PAGES_REPOSITORY = 'react-redux-realworld-app-frontent'
     DATABASE_URL = 'postgresql://placeholder:placeholder@localhost:5432/realworld?schema=public'
     DIRECT_URL = 'postgresql://placeholder:placeholder@localhost:5432/realworld?schema=public'
     APP_DB_USERNAME = 'realworld_app'
@@ -101,6 +103,7 @@ pipeline {
           rm -f infra/main/lambda.zip
           python3 -c "import shutil; shutil.make_archive('infra/main/lambda', 'zip', 'dist/api')"
           test -s infra/main/lambda.zip
+          python3 -c "import zipfile; z=zipfile.ZipFile('infra/main/lambda.zip'); size=sum(item.file_size for item in z.infolist()); print(f'Lambda uncompressed size: {size / 1024 / 1024:.1f} MiB'); assert size < 262144000, 'Lambda package exceeds AWS 250 MiB unzipped limit'"
           aws s3 cp infra/main/lambda.zip \
             "s3://$(terraform -chdir=infra/main output -raw migration_artifact_bucket)/lambda/${GIT_COMMIT}-${BUILD_NUMBER}.zip"
         '''
@@ -121,13 +124,27 @@ pipeline {
       }
     }
 
-    stage('Terraform deploy') {
+    stage('Terraform plan') {
       steps {
         sh '''
           terraform -chdir=infra/main init -input=false
           terraform -chdir=infra/main plan -input=false \
             -var="lambda_package_key=lambda/${GIT_COMMIT}-${BUILD_NUMBER}.zip" \
             -out=deployment.tfplan
+          terraform -chdir=infra/main show -no-color deployment.tfplan
+        '''
+      }
+    }
+
+    stage('Approve Terraform apply') {
+      steps {
+        input message: 'Review the Terraform plan in Console Output. Confirm RDS is not destroyed or replaced before applying.', ok: 'Apply reviewed plan'
+      }
+    }
+
+    stage('Terraform apply') {
+      steps {
+        sh '''
           terraform -chdir=infra/main apply -input=false deployment.tfplan
         '''
       }
@@ -135,16 +152,40 @@ pipeline {
 
     stage('Deploy frontend') {
       steps {
-        sh '''
-          set -eu
-          API_URL="$(terraform -chdir=infra/main output -raw api_url)/api"
-          FRONTEND_BUCKET="$(terraform -chdir=infra/main output -raw frontend_bucket)"
-          FRONTEND_URL="$(terraform -chdir=infra/main output -raw frontend_url)"
-          cd frontend
-          REACT_APP_API_ROOT="$API_URL" npm run build
-          aws s3 sync build/ "s3://${FRONTEND_BUCKET}/" --delete
-          echo "Frontend deployed to ${FRONTEND_URL}"
-        '''
+        withCredentials([usernamePassword(
+          credentialsId: 'frontend-github-pages',
+          usernameVariable: 'GH_USERNAME',
+          passwordVariable: 'GH_TOKEN'
+        )]) {
+          sh '''
+            set -eu
+            API_URL="$(terraform -chdir=infra/main output -raw api_url)/api"
+            FRONTEND_URL="https://${FRONTEND_PAGES_OWNER}.github.io/${FRONTEND_PAGES_REPOSITORY}/"
+            cd frontend
+            PUBLIC_URL="/${FRONTEND_PAGES_REPOSITORY}" REACT_APP_API_ROOT="$API_URL" npm run build
+            cp build/index.html build/404.html
+            cd build
+            git init
+            git add --all
+            git -c user.name="Jenkins" \
+              -c user.email="jenkins@users.noreply.github.com" \
+              commit -m "Deploy ${GIT_COMMIT} build ${BUILD_NUMBER}"
+            git remote add origin "$FRONTEND_REPOSITORY"
+            ASKPASS="$WORKSPACE/.git-askpass"
+            printf '%s\n' \
+              '#!/bin/sh' \
+              'case "$1" in' \
+              '  *Username*) printf "%s" "$GH_USERNAME" ;;' \
+              '  *Password*) printf "%s" "$GH_TOKEN" ;;' \
+              '  *) exit 1 ;;' \
+              'esac' > "$ASKPASS"
+            chmod 700 "$ASKPASS"
+            GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 \
+              git push --force origin HEAD:gh-pages
+            rm -f "$ASKPASS"
+            echo "Frontend deployed to ${FRONTEND_URL}"
+          '''
+        }
       }
     }
 
@@ -153,7 +194,7 @@ pipeline {
         sh '''
           set -eu
           API_URL="$(terraform -chdir=infra/main output -raw api_url)"
-          FRONTEND_URL="$(terraform -chdir=infra/main output -raw frontend_url)"
+          FRONTEND_URL="https://${FRONTEND_PAGES_OWNER}.github.io/${FRONTEND_PAGES_REPOSITORY}/"
           curl --fail --retry 12 --retry-delay 10 "$API_URL/"
           curl --fail --retry 12 --retry-delay 10 "$FRONTEND_URL/"
         '''

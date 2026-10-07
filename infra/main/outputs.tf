@@ -57,16 +57,6 @@ output "api_url" {
   value       = aws_apigatewayv2_api.api.api_endpoint
 }
 
-output "frontend_bucket" {
-  description = "Public-read website bucket Jenkins syncs with the built frontend."
-  value       = aws_s3_bucket.frontend.bucket
-}
-
-output "frontend_url" {
-  description = "HTTP S3 static website endpoint for the frontend."
-  value       = "http://${aws_s3_bucket_website_configuration.frontend.website_endpoint}"
-}
-
 output "cloudwatch_dashboard_name" {
   description = "CloudWatch application dashboard."
   value       = aws_cloudwatch_dashboard.application.dashboard_name

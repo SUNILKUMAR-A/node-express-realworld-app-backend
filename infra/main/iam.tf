@@ -98,26 +98,6 @@ data "aws_iam_policy_document" "jenkins_deploy" {
     resources = ["${aws_s3_bucket.migration_artifacts.arn}/lambda/*"]
   }
 
-  statement {
-    sid    = "PublishFrontendAssets"
-    effect = "Allow"
-    actions = [
-      "s3:ListBucket",
-    ]
-    resources = [aws_s3_bucket.frontend.arn]
-  }
-
-  statement {
-    sid    = "SyncFrontendAssets"
-    effect = "Allow"
-    actions = [
-      "s3:PutObject",
-      "s3:DeleteObject",
-      "s3:AbortMultipartUpload",
-    ]
-    resources = ["${aws_s3_bucket.frontend.arn}/*"]
-  }
-
 }
 
 resource "aws_iam_role_policy" "jenkins_deploy" {
