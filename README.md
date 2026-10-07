@@ -72,6 +72,8 @@ Create a Jenkins `Username with password` credential with ID `frontend-github-pa
 
 The deployed Lambda artifact key records the source Git commit and Jenkins build number. Use Git SemVer tags for release labels; do not deploy a mutable `latest` artifact. Review pipeline scan reports and address or document findings rather than describing an unreviewed audit as clean.
 
+The pipeline stores npm's download cache in `/home/ec2-user/.cache/jenkins/npm` on the `aws-builder` agent, outside the Jenkins workspace. This cache survives `deleteDir()` between builds and is reused by backend, frontend, and Lambda dependency installs. `npm ci` still performs a clean install from each lockfile; only downloaded package data is cached. Monitor agent disk usage and periodically run `sudo -u ec2-user npm cache clean --force` if the cache grows too large.
+
 ## Monitoring and security
 
 CloudWatch retains Lambda and API Gateway logs for seven days, provides Lambda error alarms, and the Terraform stack creates a dashboard for Lambda invocations/errors/throttles/duration, API Gateway request/latency/5xx metrics, and RDS CPU/connections. Grafana can visualize CloudWatch metrics if needed; Prometheus is not used to scrape Lambda.

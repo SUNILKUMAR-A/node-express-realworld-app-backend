@@ -21,6 +21,7 @@ pipeline {
     FRONTEND_BRANCH = 'master'
     FRONTEND_PAGES_OWNER = 'SUNILKUMAR-A'
     FRONTEND_PAGES_REPOSITORY = 'react-redux-realworld-app-frontent'
+    NPM_CONFIG_CACHE = '/home/ec2-user/.cache/jenkins/npm'
     DATABASE_URL = 'postgresql://placeholder:placeholder@localhost:5432/realworld?schema=public'
     DIRECT_URL = 'postgresql://placeholder:placeholder@localhost:5432/realworld?schema=public'
     APP_DB_USERNAME = 'realworld_app'
@@ -39,13 +40,14 @@ pipeline {
     stage('Install, test, and scan') {
       steps {
         sh '''
-          npm ci
+          mkdir -p "$NPM_CONFIG_CACHE"
+          npm ci --cache "$NPM_CONFIG_CACHE"
           npx prisma generate
           npx nx build api --configuration=production
           npx nx test api --runInBand
           npm audit --json > backend-npm-audit.json || true
           cd frontend
-          npm ci --legacy-peer-deps
+          npm ci --legacy-peer-deps --cache "$NPM_CONFIG_CACHE"
           npm audit --json > ../frontend-npm-audit.json || true
           cd ..
           if command -v checkov >/dev/null 2>&1; then
@@ -94,7 +96,8 @@ pipeline {
           set -eu
           mkdir -p dist/api/src/prisma
           cp -a src/prisma/schema.prisma src/prisma/migrations dist/api/src/prisma/
-          npm ci --omit=dev --prefix dist/api
+          mkdir -p "$NPM_CONFIG_CACHE"
+          npm ci --omit=dev --cache "$NPM_CONFIG_CACHE" --prefix dist/api
           mkdir -p dist/api/node_modules/@prisma dist/api/node_modules/.prisma
           rm -rf dist/api/node_modules/@prisma/client dist/api/node_modules/.prisma/client
           cp -a node_modules/@prisma/client dist/api/node_modules/@prisma/
@@ -103,6 +106,7 @@ pipeline {
           rm -f infra/main/lambda.zip
           python3 -c "import shutil; shutil.make_archive('infra/main/lambda', 'zip', 'dist/api')"
           test -s infra/main/lambda.zip
+          python3 -c "import collections,zipfile; z=zipfile.ZipFile('infra/main/lambda.zip'); d=collections.Counter(); [d.update({'/'.join(i.filename.split('/')[:3]):i.file_size}) for i in z.infolist() if i.filename.startswith('node_modules/')]; print('Largest Lambda package dependencies:\\n'+'\\n'.join(f'{size / 1024 / 1024:8.1f} MiB  {name}' for name,size in d.most_common(20)))"
           python3 -c "import zipfile; z=zipfile.ZipFile('infra/main/lambda.zip'); size=sum(item.file_size for item in z.infolist()); print(f'Lambda uncompressed size: {size / 1024 / 1024:.1f} MiB'); assert size < 262144000, 'Lambda package exceeds AWS 250 MiB unzipped limit'"
           aws s3 cp infra/main/lambda.zip \
             "s3://$(terraform -chdir=infra/main output -raw migration_artifact_bucket)/lambda/${GIT_COMMIT}-${BUILD_NUMBER}.zip"
