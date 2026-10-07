@@ -66,11 +66,11 @@ variable "lambda_package_key" {
 variable "jenkins" {
   description = "Existing Jenkins EC2 network and IAM role details. Leave null until configured."
   type = object({
-    vpc_id          = string
-    vpc_cidr        = string
-    route_table_id  = string
+    vpc_id            = string
+    vpc_cidr          = string
+    route_table_id    = string
     security_group_id = string
-    iam_role_name   = string
+    iam_role_name     = string
   })
   default  = null
   nullable = true
