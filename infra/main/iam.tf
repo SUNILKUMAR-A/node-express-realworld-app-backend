@@ -54,3 +54,27 @@ resource "aws_iam_role_policy" "lambda_runtime" {
   role   = aws_iam_role.lambda.id
   policy = data.aws_iam_policy_document.lambda_runtime.json
 }
+
+data "aws_iam_policy_document" "jenkins_migrations" {
+  statement {
+    sid       = "ReadRdsManagedCredentials"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_db_instance.app.master_user_secret[0].secret_arn]
+  }
+
+  statement {
+    sid       = "ReadAndWriteApplicationCredentials"
+    effect    = "Allow"
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:PutSecretValue"]
+    resources = [aws_secretsmanager_secret.app_credentials.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "jenkins_migrations" {
+  count = local.jenkins_peering_enabled ? 1 : 0
+
+  name   = "${local.name}-jenkins-migrations"
+  role   = var.jenkins.iam_role_name
+  policy = data.aws_iam_policy_document.jenkins_migrations.json
+}

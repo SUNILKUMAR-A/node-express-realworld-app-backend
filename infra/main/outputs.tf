@@ -38,21 +38,16 @@ output "database_app_secret_arn" {
 }
 
 output "database_master_secret_arn" {
-  description = "Secrets Manager ARN for RDS-managed master credentials; grant only to the migration job."
+  description = "Secrets Manager ARN for RDS-managed master credentials; Jenkins uses it only for migrations."
   value       = aws_db_instance.app.master_user_secret[0].secret_arn
 }
 
-output "migration_security_group_id" {
-  description = "Attach this security group to the one-shot database migration job."
-  value       = aws_security_group.migrations.id
-}
-
-output "migration_codebuild_project" {
-  description = "On-demand CodeBuild project for private RDS migrations."
-  value       = aws_codebuild_project.migration.name
+output "jenkins_vpc_peering_connection_id" {
+  description = "VPC peering connection between the Jenkins EC2 VPC and the private database VPC."
+  value       = try(aws_vpc_peering_connection.jenkins[0].id, null)
 }
 
 output "migration_artifact_bucket" {
-  description = "Private S3 bucket for migration source artifacts."
+  description = "Private S3 bucket for Jenkins-generated deployment artifacts."
   value       = aws_s3_bucket.migration_artifacts.bucket
 }

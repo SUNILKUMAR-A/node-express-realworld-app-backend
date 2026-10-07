@@ -35,28 +35,21 @@ For PostgreSQL, set `DATABASE_URL` to the application connection string and `DIR
 
 ### Private RDS migrations
 
-The production database is private and accepts connections only from the application Lambda and the one-shot migration runner security groups. The Terraform stack provisions a VPC-connected CodeBuild project, an encrypted private S3 artifact bucket, and VPC endpoints for S3, Secrets Manager, and CloudWatch Logs. This avoids a NAT gateway, but interface endpoints have hourly charges.
+The RDS database is private and accepts connections only from the application Lambda and the Jenkins host security group over same-region VPC peering. Jenkins runs on the existing EC2 host, avoiding a second always-on build instance. VPC peering has no hourly connection charge; data transfer may be billed. The VPC has a private Secrets Manager interface endpoint for Lambda. Jenkins uses its EC2 instance role to call Secrets Manager through its existing outbound connectivity. The Secrets Manager interface endpoint has an hourly charge and is not covered by the typical RDS free-tier allowance.
 
-The migration runner temporarily uses the RDS-managed master credential to create or rotate a restricted `realworld_app` database role. It then runs `prisma migrate deploy` as that restricted role and stores the application credential JSON in the dedicated Secrets Manager secret. The Lambda role can read only the application secret; it cannot read the RDS master secret. Never print or commit either credential.
+Jenkins temporarily reads the RDS-managed master credential to create a restricted `realworld_app` database role. It runs `prisma migrate deploy` as that restricted role and stores the application credential JSON in the dedicated Secrets Manager secret. Terraform grants the configured Jenkins EC2 role access only to the RDS master secret and this application secret. The Lambda role can read only the application secret; it cannot read the RDS master secret. Never print or commit either credential.
 
-To prepare and invoke a migration after applying the Terraform stack:
+To run migrations from Jenkins after VPC peering and its IAM policy are applied, configure these non-secret values from Terraform outputs as pipeline environment variables: `DB_HOST`, `DB_PORT`, `DB_NAME`, `RDS_MASTER_SECRET_ARN`, `APP_SECRET_ARN`, and `APP_DB_USERNAME=realworld_app`. Jenkins must check out the backend repository and use the repository's Node/npm toolchain. Then run:
 
 ```shell
 npm ci
-npx prisma generate
-export MIGRATION_ARTIFACT_BUCKET="$(terraform -chdir=infra/main output -raw migration_artifact_bucket)"
-./scripts/package-migration-artifact.sh
-aws codebuild start-build \
-  --project-name "$(terraform -chdir=infra/main output -raw migration_codebuild_project)"
+DATABASE_URL='postgresql://placeholder:placeholder@localhost:5432/realworld' \
+DIRECT_URL='postgresql://placeholder:placeholder@localhost:5432/realworld' \
+  npx prisma generate
+node scripts/provision-app-db-user.js
 ```
 
-Check the CodeBuild result and CloudWatch Logs before deploying an API release. The migration artifact contains installed Node dependencies and Prisma migrations; it is uploaded to a private, encrypted, versioned S3 bucket with a 30-day lifecycle.
-
-On Linux, invoke the packaging helper with `bash` if its executable bit is not set:
-
-```shell
-bash ./scripts/package-migration-artifact.sh
-```
+The placeholder URLs are used only for Prisma client generation; migrations and database-user provisioning obtain their real credentials from Secrets Manager at runtime. Jenkins must run migrations before publishing a backend release. The private, encrypted, versioned S3 bucket is reserved for deployment artifacts and expires old migration artifacts after 30 days.
 
 ### Generate your Prisma client
 

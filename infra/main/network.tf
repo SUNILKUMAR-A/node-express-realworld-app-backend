@@ -54,24 +54,6 @@ resource "aws_security_group" "lambda" {
   }
 }
 
-resource "aws_security_group" "migrations" {
-  name        = "${local.name}-migrations"
-  description = "Security group for one-shot private database migrations."
-  vpc_id      = aws_vpc.app.id
-
-  egress {
-    description = "Allow outbound traffic to private VPC endpoints and PostgreSQL."
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "${local.name}-migrations"
-  }
-}
-
 resource "aws_security_group" "secrets_manager_endpoint" {
   name        = "${local.name}-secrets-endpoint"
   description = "Allow HTTPS from the application Lambda to the Secrets Manager VPC endpoint."
@@ -83,14 +65,6 @@ resource "aws_security_group" "secrets_manager_endpoint" {
     to_port         = 443
     protocol        = "tcp"
     security_groups = [aws_security_group.lambda.id]
-  }
-
-  ingress {
-    description     = "HTTPS from the one-shot migration runner."
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.migrations.id]
   }
 
   tags = {
@@ -122,37 +96,6 @@ resource "aws_vpc_endpoint" "s3" {
   }
 }
 
-resource "aws_security_group" "logs_endpoint" {
-  name        = "${local.name}-logs-endpoint"
-  description = "Allow HTTPS from the migration runner to CloudWatch Logs."
-  vpc_id      = aws_vpc.app.id
-
-  ingress {
-    description     = "HTTPS from the one-shot migration runner."
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.migrations.id]
-  }
-
-  tags = {
-    Name = "${local.name}-logs-endpoint"
-  }
-}
-
-resource "aws_vpc_endpoint" "logs" {
-  vpc_id              = aws_vpc.app.id
-  service_name        = "com.amazonaws.${var.aws_region}.logs"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = [aws_subnet.database[0].id]
-  security_group_ids  = [aws_security_group.logs_endpoint.id]
-  private_dns_enabled = true
-
-  tags = {
-    Name = "${local.name}-logs"
-  }
-}
-
 resource "aws_security_group" "database" {
   name        = "${local.name}-database"
   description = "Allow PostgreSQL connections only from the application Lambda security group."
@@ -166,12 +109,16 @@ resource "aws_security_group" "database" {
     security_groups = [aws_security_group.lambda.id]
   }
 
-  ingress {
-    description     = "PostgreSQL from the one-shot migration runner."
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.migrations.id]
+  dynamic "ingress" {
+    for_each = var.jenkins == null ? [] : [var.jenkins.security_group_id]
+
+    content {
+      description     = "PostgreSQL from the Jenkins EC2 security group over VPC peering."
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = [ingress.value]
+    }
   }
 
   egress {

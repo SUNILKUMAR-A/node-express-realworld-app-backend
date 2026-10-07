@@ -2,13 +2,52 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const { PrismaClient } = require('@prisma/client');
 
-const masterSecret = JSON.parse(process.env.RDS_MASTER_SECRET);
 const databaseName = process.env.DB_NAME;
 const username = process.env.APP_DB_USERNAME;
-const password = crypto.randomBytes(32).toString('base64url');
+
+const getSecret = (secretArn, optional = false) => {
+  if (!secretArn) {
+    throw new Error('A required Secrets Manager ARN is not configured.');
+  }
+
+  try {
+    const result = execFileSync(
+      'aws',
+      [
+        'secretsmanager',
+        'get-secret-value',
+        '--secret-id',
+        secretArn,
+        '--query',
+        'SecretString',
+        '--output',
+        'text',
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    return JSON.parse(result.trim());
+  } catch (error) {
+    const stderr = error.stderr ? error.stderr.toString() : '';
+    if (optional && /ResourceNotFoundException/.test(stderr)) {
+      return null;
+    }
+    const code = stderr.match(/([A-Za-z]+Exception)/);
+    throw new Error(`Unable to retrieve a required database secret (${code ? code[1] : 'AWS CLI error'}).`);
+  }
+};
+
+const runAws = (args) => {
+  const result = spawnSync('aws', args, { stdio: 'inherit' });
+  if (result.error) {
+    throw result.error;
+  }
+  if (result.status !== 0) {
+    throw new Error(`AWS CLI command failed with status ${result.status}.`);
+  }
+};
 
 const connectionUrl = (user, secretPassword) => {
   const url = new URL(
@@ -19,6 +58,21 @@ const connectionUrl = (user, secretPassword) => {
 };
 
 const run = async () => {
+  for (const key of ['DB_HOST', 'DB_PORT', 'DB_NAME', 'APP_DB_USERNAME', 'APP_SECRET_ARN', 'RDS_MASTER_SECRET_ARN']) {
+    if (!process.env[key]) {
+      throw new Error(`Required environment variable ${key} is not configured.`);
+    }
+  }
+
+  const masterSecret = getSecret(process.env.RDS_MASTER_SECRET_ARN);
+  const currentAppSecret = getSecret(process.env.APP_SECRET_ARN, true);
+  if (currentAppSecret && !currentAppSecret.password) {
+    throw new Error('The application database secret does not contain a password.');
+  }
+  const password = currentAppSecret
+    ? currentAppSecret.password
+    : crypto.randomBytes(32).toString('base64url');
+
   const admin = new PrismaClient({
     datasources: {
       db: {
@@ -63,7 +117,9 @@ const run = async () => {
     {
       env: {
         ...Object.fromEntries(
-          Object.entries(process.env).filter(([key]) => key !== 'RDS_MASTER_SECRET'),
+          Object.entries(process.env).filter(
+            ([key]) => key !== 'DATABASE_URL' && key !== 'DIRECT_URL',
+          ),
         ),
         DATABASE_URL: appUrl,
         DIRECT_URL: appUrl,
@@ -91,37 +147,21 @@ const run = async () => {
 
   try {
     fs.writeFileSync(secretFile, secretValue, { mode: 0o600, flag: 'wx' });
-    const result = spawnSync(
-      'aws',
-      [
-        'secretsmanager',
-        'put-secret-value',
-        '--secret-id',
-        process.env.APP_SECRET_ARN,
-        '--secret-string',
-        `file://${secretFile}`,
-      ],
-      { stdio: 'inherit' },
-    );
-    if (result.error) {
-      throw result.error;
-    }
-    if (result.status !== 0) {
-      throw new Error(`Writing application credentials failed with status ${result.status}`);
-    }
+    runAws([
+      'secretsmanager',
+      'put-secret-value',
+      '--secret-id',
+      process.env.APP_SECRET_ARN,
+      '--secret-string',
+      `file://${secretFile}`,
+    ]);
   } finally {
     fs.rmSync(secretFile, { force: true });
   }
 };
 
 run().catch((error) => {
-  const details =
-    error instanceof Error ? error.message : String(error);
-  const sanitized = details
-    .split(masterSecret.password)
-    .join('[REDACTED]')
-    .split(password)
-    .join('[REDACTED]');
-  console.error(`Database migration or application-user provisioning failed: ${sanitized}`);
+  const details = error instanceof Error ? error.message : String(error);
+  console.error(`Database migration or application-user provisioning failed: ${details}`);
   process.exitCode = 1;
 });

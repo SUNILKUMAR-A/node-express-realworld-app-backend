@@ -51,6 +51,25 @@ variable "db_storage_gib" {
   }
 }
 
+variable "jenkins" {
+  description = "Existing Jenkins EC2 network and IAM role details. Leave null until configured."
+  type = object({
+    vpc_id          = string
+    vpc_cidr        = string
+    route_table_id  = string
+    security_group_id = string
+    iam_role_name   = string
+  })
+  default  = null
+  nullable = true
+
+  validation {
+    condition     = var.jenkins == null ? true : can(cidrnetmask(var.jenkins.vpc_cidr))
+    error_message = "jenkins.vpc_cidr must be a valid IPv4 CIDR block."
+  }
+}
+
 locals {
-  name = "realworld-${var.environment}"
+  name                    = "realworld-${var.environment}"
+  jenkins_peering_enabled = var.jenkins != null
 }
