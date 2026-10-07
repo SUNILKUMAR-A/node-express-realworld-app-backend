@@ -64,7 +64,7 @@ output "frontend_bucket" {
 
 output "frontend_url" {
   description = "HTTP S3 static website endpoint for the frontend."
-  value       = "http://${aws_s3_bucket.frontend.website_endpoint}"
+  value       = "http://${aws_s3_bucket_website_configuration.frontend.website_endpoint}"
 }
 
 output "cloudwatch_dashboard_name" {
